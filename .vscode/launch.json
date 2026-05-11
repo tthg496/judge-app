@@ -1,0 +1,35 @@
+  {
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "java",
+      "name": "Run MainApp",
+      "request": "launch",
+      "mainClass": "com.judgeapp.MainApp",
+      "projectName": "judge-app",
+      "env": {
+        "SQLSERVER_HOST": "localhost",
+        "SQLSERVER_PORT": "1433",
+        "SQLSERVER_DB": "JudgeApp",
+        "SQLSERVER_AUTH": "windows",
+        "SQLSERVER_ENCRYPT": "false"
+      },
+      "vmArgs": "-Djava.library.path=."
+    },
+    {
+      "type": "java",
+      "name": "Run DbSmokeTest",
+      "request": "launch",
+      "mainClass": "DbSmokeTest",
+      "projectName": "judge-app",
+      "env": {
+        "SQLSERVER_HOST": "localhost",
+        "SQLSERVER_PORT": "1433",
+        "SQLSERVER_DB": "JudgeApp",
+        "SQLSERVER_AUTH": "windows",
+        "SQLSERVER_ENCRYPT": "false"
+      },
+      "vmArgs": "-Djava.library.path=."
+    }
+  ]
+}

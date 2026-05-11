@@ -3,6 +3,7 @@ package com.judgeapp;
 import com.judgeapp.ai.GeminiAPI;
 import com.judgeapp.db.*;
 import com.judgeapp.judge.Judge;
+import com.judgeapp.ocr.OCRManager;
 import com.google.gson.*;
 
 import javax.swing.*;
@@ -48,8 +49,7 @@ public class MainApp extends JFrame {
         styleTabs(tabs);
         tabs.addTab("  Danh sách đề  ", buildProblemListPanel());
         tabs.addTab("  Thêm đề  ", buildAddProblemPanel());
-        tabs.addTab("  Nộp & Chấm code  ", buildSubmitPanel());
-        tabs.addTab("  Stress Test  ", buildStressPanel());
+        tabs.addTab("  độ mạnh test case  ", buildStressPanel());
 
         JPanel root = new JPanel(new BorderLayout());
         root.setBackground(BG);
@@ -405,9 +405,32 @@ public class MainApp extends JFrame {
 
         panel.add(card("Kho đề bài", darkScroll(problemTable)), BorderLayout.CENTER);
 
+        // Double-click để xem chi tiết
+        problemTable.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (e.getClickCount() == 2) {
+                    int row = problemTable.rowAtPoint(e.getPoint());
+                    if (row >= 0) {
+                        int problemId = Integer.parseInt(problemModel.getValueAt(row, 0).toString());
+                        showProblemDetailsDialog(problemId);
+                    }
+                }
+            }
+        });
+
         JButton btnRefresh = makeBtn("Làm mới", ACCENT);
+        JButton btnViewDetails = makeBtn("Xem chi tiết", new Color(99, 102, 241));
         JButton btnManageTc = makeBtn("Quản lý testcase", new Color(14, 165, 233));
         btnRefresh.addActionListener(e -> refreshProblemTable());
+        btnViewDetails.addActionListener(e -> {
+            int row = problemTable.getSelectedRow();
+            if (row < 0) {
+                showError("Chọn một đề trong danh sách trước!");
+                return;
+            }
+            int problemId = Integer.parseInt(problemModel.getValueAt(row, 0).toString());
+            showProblemDetailsDialog(problemId);
+        });
         btnManageTc.addActionListener(e -> {
             int row = problemTable.getSelectedRow();
             if (row < 0) {
@@ -420,6 +443,7 @@ public class MainApp extends JFrame {
         });
         JPanel south = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         south.setBackground(BG);
+        south.add(btnViewDetails);
         south.add(btnManageTc);
         south.add(btnRefresh);
         panel.add(south, BorderLayout.SOUTH);
@@ -444,7 +468,7 @@ public class MainApp extends JFrame {
         panel.setBackground(BG);
         panel.setBorder(BorderFactory.createEmptyBorder(18, 22, 22, 22));
 
-        panel.add(pageHeader("Thêm đề bài mới", "Nhập nội dung, ảnh đề và bộ testcase"), BorderLayout.NORTH);
+        panel.add(pageHeader("Thêm đề bài mới", "Nhập nội dung, ảnh đề, và testcase (tùy chọn)"), BorderLayout.NORTH);
 
         JTextField tfTitle = makeField("Nhập tên đề...");
         JTextArea taContent = makeTextArea();
@@ -572,7 +596,7 @@ public class MainApp extends JFrame {
         tcPanel.add(tcTop, BorderLayout.NORTH);
         JScrollPane tcScroll = darkScroll(tcTable);
         tcScroll.setPreferredSize(new Dimension(560, 170));
-        tcPanel.add(card("Danh sách testcase (sẽ lưu cùng đề bài)", tcScroll), BorderLayout.CENTER);
+        tcPanel.add(card("Danh sách testcase (tùy chọn - có thể thêm sau)", tcScroll), BorderLayout.CENTER);
 
         JSplitPane editorSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
             card("Thông tin đề bài", problemForm),
@@ -619,14 +643,26 @@ public class MainApp extends JFrame {
         btnOCR.addActionListener(e -> {
             if (imagePath[0] == null) { showError("Chọn ảnh trước!"); return; }
             lblStatus.setForeground(YELLOW);
-            lblStatus.setText("⏳ AI đang đọc ảnh...");
+            lblStatus.setText("⏳ Tesseract OCR đang đọc ảnh...");
             new Thread(() -> {
                 try {
-                    String text = GeminiAPI.readImageProblem(imagePath[0]);
+                    String text = OCRManager.readImageText(imagePath[0]);
                     SwingUtilities.invokeLater(() -> {
-                        taContent.setText(text);
+                        // Parse thông tin từ text OCR
+                        String[] info = parseProblemInfoFromText(text);
+                        String title = info[0];
+                        String content = info[1];
+                        String timeLimit = info[2];
+                        String memLimit = info[3];
+                        
+                        // Tự điền vào form
+                        if (!title.isEmpty()) tfTitle.setText(title);
+                        if (!content.isEmpty()) taContent.setText(content);
+                        if (!timeLimit.isEmpty()) tfTime.setText(timeLimit);
+                        if (!memLimit.isEmpty()) tfMem.setText(memLimit);
+                        
                         lblStatus.setForeground(GREEN);
-                        lblStatus.setText("✅ AI đọc ảnh xong!");
+                        lblStatus.setText("✅ OCR đọc & parse xong! Tên: " + title);
                     });
                 } catch (Exception ex) {
                     SwingUtilities.invokeLater(() -> {
@@ -725,16 +761,23 @@ public class MainApp extends JFrame {
                 int ml = Integer.parseInt(memText);
                 if (title.isEmpty()) { showError("Nhập tên đề!"); return; }
                 if (content.isEmpty()) { showError("Nhập nội dung đề!"); return; }
-                if (pendingTestcases.isEmpty()) {
-                    showError("Bạn cần thêm ít nhất 1 testcase trước khi lưu đề!");
-                    return;
-                }
+                
+                // Lưu đề (không bắt buộc testcase)
                 int id = ProblemDAO.addProblem(title, content, tl, ml);
-                for (String[] tc : pendingTestcases) {
-                    TestcaseDAO.addTestcase(id, tc[0], tc[1], "Sample".equals(tc[2]));
+                
+                // Lưu testcase nếu có
+                if (!pendingTestcases.isEmpty()) {
+                    for (String[] tc : pendingTestcases) {
+                        TestcaseDAO.addTestcase(id, tc[0], tc[1], "Sample".equals(tc[2]));
+                    }
+                    lblStatus.setForeground(GREEN);
+                    lblStatus.setText("✅ Lưu thành công! Problem ID = " + id + " | " + pendingTestcases.size() + " testcase");
+                } else {
+                    lblStatus.setForeground(GREEN);
+                    lblStatus.setText("✅ Lưu đề thành công! Problem ID = " + id + " (Chưa có testcase - có thể thêm sau)");
                 }
-                lblStatus.setForeground(GREEN);
-                lblStatus.setText("✅ Lưu thành công! Problem ID = " + id + " | " + pendingTestcases.size() + " testcase");
+                
+                // Reset form
                 tfTitle.setText(""); taContent.setText(""); taTcInput.setText("Nhập input testcase..."); taTcOutput.setText("Nhập expected output...");
                 imagePath[0] = null;
                 lblImagePath.setText("Chưa chọn ảnh");
@@ -847,134 +890,14 @@ public class MainApp extends JFrame {
     }
 
     // ============================================================
-    // TAB 3: NỘP CODE
-    // ============================================================
-    private JPanel buildSubmitPanel() {
-        JPanel panel = new JPanel(new BorderLayout(14, 14));
-        panel.setBackground(BG);
-        panel.setBorder(BorderFactory.createEmptyBorder(18, 22, 22, 22));
-
-        JPanel north = new JPanel(new BorderLayout(0, 12));
-        north.setOpaque(false);
-        north.add(pageHeader("Nộp & Chấm code", "Chạy submission trên toàn bộ testcase"), BorderLayout.NORTH);
-
-        // Top bar
-        JPanel topBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 2));
-        topBar.setOpaque(false);
-        JTextField tfId = makeField("ID đề");
-        tfId.setPreferredSize(new Dimension(80, 36));
-        JComboBox<String> cbLang = new JComboBox<>(new String[]{"Java", "C++", "Python"});
-        styleCombo(cbLang);
-        JButton btnLoad = makeBtn("Tải đề", new Color(59, 130, 246));
-        JLabel lblTitle = new JLabel("Chưa chọn đề");
-        lblTitle.setForeground(MUTED); lblTitle.setFont(BODY_FONT);
-        topBar.add(makeLabel("Problem ID:")); topBar.add(tfId);
-        topBar.add(cbLang); topBar.add(btnLoad); topBar.add(lblTitle);
-        north.add(card(null, topBar), BorderLayout.SOUTH);
-
-        // Code area
-        JTextArea taCode = makeCodeArea();
-        taCode.setText("// Paste code của bạn vào đây\n");
-
-        // Result
-        JTextArea taResult = makeCodeArea();
-        taResult.setEditable(false);
-        taResult.setForeground(GREEN);
-
-        JButton btnSubmit = makeBtn("Nộp bài (chấm tất cả testcase)", ACCENT);
-        JButton btnCustom = makeBtn("Test input tùy chỉnh", new Color(234, 88, 12));
-
-        JPanel btnRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 5));
-        btnRow.setBackground(BG);
-        btnRow.add(btnSubmit); btnRow.add(btnCustom);
-
-        JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
-            card("Code editor", darkScroll(taCode)),
-            card("Kết quả chấm", darkScroll(taResult)));
-        split.setDividerLocation(380);
-        split.setBackground(BG);
-        split.setBorder(new RoundedBorder(BORDER, 8));
-        split.setDividerSize(7);
-        split.setResizeWeight(0.62);
-
-        panel.add(north, BorderLayout.NORTH);
-        panel.add(split, BorderLayout.CENTER);
-        panel.add(btnRow, BorderLayout.SOUTH);
-
-        // Load đề
-        btnLoad.addActionListener(e -> {
-            try {
-                int id = Integer.parseInt(tfId.getText().trim());
-                String[] prob = ProblemDAO.getProblem(id);
-                if (prob == null) { showError("Không tìm thấy đề ID=" + id); return; }
-                lblTitle.setForeground(GREEN);
-                lblTitle.setText("✅ " + prob[1] + "  |  TL: " + prob[3] + "s  |  ML: " + prob[4] + "MB");
-            } catch (Exception ex) { showError("ID không hợp lệ!"); }
-        });
-
-        // Nộp bài
-        btnSubmit.addActionListener(e -> {
-            try {
-                int id = Integer.parseInt(tfId.getText().trim());
-                String[] prob = ProblemDAO.getProblem(id);
-                if (prob == null) { showError("Load đề trước!"); return; }
-                double tl = Double.parseDouble(prob[3]);
-                String lang = (String) cbLang.getSelectedItem();
-                String code = taCode.getText();
-                List<String[]> tcs = TestcaseDAO.getTestcases(id);
-                if (tcs.isEmpty()) { showError("Đề này chưa có testcase!"); return; }
-
-                taResult.setText("⏳ Đang chấm...");
-                new Thread(() -> {
-                    StringBuilder sb = new StringBuilder();
-                    int ac = 0;
-                    for (int i = 0; i < tcs.size(); i++) {
-                        String[] tc = tcs.get(i);
-                        String[] res = Judge.run(code, tc[1], tl, lang);
-                        String verdict;
-                        if (isSystemVerdict(res[0])) {
-                            verdict = res[0];
-                        } else {
-                            verdict = Judge.check(tc[2], res[0]);
-                            if (verdict.equals("AC")) ac++;
-                        }
-                        sb.append(String.format("Test #%2d [%-6s]: %s", i+1, tc[3], verdict));
-                        if (!isSystemVerdict(res[0]))
-                            sb.append("  (").append(res[1]).append("ms)");
-                        sb.append("\n");
-                        if (!res[2].isEmpty()) sb.append("         ").append(res[2]).append("\n");
-                    }
-                    int finalAc = ac;
-                    SwingUtilities.invokeLater(() ->
-                        taResult.setText(sb + "\n🏁 Kết quả: " + finalAc + "/" + tcs.size() + " AC"));
-                }).start();
-            } catch (Exception ex) { taResult.setText("❌ " + ex.getMessage()); }
-        });
-
-        // Test tùy chỉnh
-        btnCustom.addActionListener(e -> {
-            String input = JOptionPane.showInputDialog(this, "Nhập input:");
-            if (input == null) return;
-            String lang = (String) cbLang.getSelectedItem();
-            String[] res = Judge.run(taCode.getText(), input, 5.0, lang);
-            if (isSystemVerdict(res[0]))
-                taResult.setText("Verdict: " + res[0] + "\n" + res[2]);
-            else
-                taResult.setText("✅ Output:\n" + res[0] + "\n\nRuntime: " + res[1] + "ms");
-        });
-
-        return panel;
-    }
-
-    // ============================================================
-    // TAB 4: STRESS TEST
+    // TAB 3: KIỂM TRA ĐỘ MẠNH TESTCASE
     // ============================================================
     private JPanel buildStressPanel() {
         JPanel panel = new JPanel(new BorderLayout(14, 14));
         panel.setBackground(BG);
         panel.setBorder(BorderFactory.createEmptyBorder(18, 22, 22, 22));
 
-        panel.add(pageHeader("Stress Test", "Kiểm tra độ mạnh của testcase"), BorderLayout.NORTH);
+        panel.add(pageHeader("Kiểm tra test case", "Kiểm tra độ mạnh của testcase"), BorderLayout.NORTH);
 
         // 3 code editors
         JTextArea taAC = makeCodeArea();
@@ -1000,7 +923,7 @@ public class MainApp extends JFrame {
         tfRuns.setPreferredSize(new Dimension(70, 36));
         JComboBox<String> cbLang = new JComboBox<>(new String[]{"Java", "C++", "Python"});
         styleCombo(cbLang);
-        JButton btnRun = makeBtn("Chạy Stress Test", GREEN);
+        JButton btnRun = makeBtn("Chạy kiểm tra độ mạnh", GREEN);
         configRow.add(makeLabel("Problem ID:")); configRow.add(tfProbId);
         configRow.add(makeLabel("Số lần chạy:")); configRow.add(tfRuns);
         configRow.add(cbLang); configRow.add(btnRun);
@@ -1010,7 +933,7 @@ public class MainApp extends JFrame {
         taResult.setEditable(false);
 
         JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
-            codeTabs, card("Kết quả Stress Test", darkScroll(taResult)));
+            codeTabs, card("Kết quả kiểm tra độ mạnh", darkScroll(taResult)));
         split.setDividerLocation(350);
         split.setBackground(BG);
         split.setBorder(new RoundedBorder(BORDER, 8));
@@ -1020,25 +943,49 @@ public class MainApp extends JFrame {
         panel.add(split, BorderLayout.CENTER);
         panel.add(card(null, configRow), BorderLayout.SOUTH);
 
-        // Stress test logic
+        // Kiểm tra độ mạnh testcase logic
         btnRun.addActionListener(e -> {
             try {
-                int probId = Integer.parseInt(tfProbId.getText().trim());
+                String probIdStr = tfProbId.getText().trim();
+                if (probIdStr.isEmpty()) { 
+                    taResult.setText("❌ Lỗi: Phải nhập Problem ID!"); 
+                    return; 
+                }
+                
+                int probId = Integer.parseInt(probIdStr);
                 int runs = Integer.parseInt(tfRuns.getText().trim());
                 String lang = (String) cbLang.getSelectedItem();
+                
                 String[] prob = ProblemDAO.getProblem(probId);
-                if (prob == null) { showError("Không tìm thấy đề!"); return; }
+                if (prob == null) { 
+                    taResult.setText("❌ Lỗi: Không tìm thấy đề ID=" + probId + "!"); 
+                    return; 
+                }
+                
                 double tl = Double.parseDouble(prob[3]);
                 List<String[]> tcs = TestcaseDAO.getTestcases(probId);
-                if (tcs.isEmpty()) { showError("Đề chưa có testcase!"); return; }
+                if (tcs.isEmpty()) { 
+                    taResult.setText("❌ Lỗi: Đề ID=" + probId + " chưa có testcase!"); 
+                    return; 
+                }
+                
+                String codeAC = taAC.getText().trim();
+                if (codeAC.isEmpty() || codeAC.contains("// Paste")) {
+                    taResult.setText("❌ Lỗi: Phải nhập Code AC vào tab 'Code AC'!"); 
+                    return;
+                }
 
-                taResult.setText("⏳ Đang stress test " + runs + " lần...\n\n");
+                taResult.setText("⏳ Chuẩn bị kiểm tra độ mạnh " + Math.min(runs, tcs.size()) + " testcase...\n");
+                taResult.append("   Problem: " + prob[1] + " (ID=" + probId + ")\n");
+                taResult.append("   Time Limit: " + tl + "s\n");
+                taResult.append("   Testcase có: " + tcs.size() + "\n");
+                taResult.append("   Language: " + lang + "\n\n");
+                
                 new Thread(() -> {
                     StringBuilder sb = new StringBuilder();
                     int acPassed = 0, waDetected = 0, tleDetected = 0;
-                    String codeAC = taAC.getText();
-                    String codeWA = taWA.getText().contains("// Paste") ? null : taWA.getText();
-                    String codeTLE = taTLE.getText().contains("// Paste") ? null : taTLE.getText();
+                    String codeWA = taWA.getText().contains("// Paste") ? null : taWA.getText().trim();
+                    String codeTLE = taTLE.getText().contains("// Paste") ? null : taTLE.getText().trim();
 
                     for (int i = 0; i < Math.min(runs, tcs.size()); i++) {
                         String input = tcs.get(i)[1];
@@ -1072,7 +1019,7 @@ public class MainApp extends JFrame {
                         sb.append("\n");
                     }
 
-                    sb.append("\n━━━━━━━━━━━━━━━━━━━━━━\n");
+                    sb.append("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
                     sb.append("✅ Code AC đúng: ").append(acPassed).append("/").append(Math.min(runs, tcs.size())).append("\n");
                     if (codeWA != null) sb.append("❌ WA bị phát hiện: ").append(waDetected).append(" lần\n");
                     if (codeTLE != null) sb.append("⏰ TLE bị phát hiện: ").append(tleDetected).append(" lần\n");
@@ -1084,9 +1031,14 @@ public class MainApp extends JFrame {
                     if ((codeWA == null || waDetected > 0) && (codeTLE == null || tleDetected > 0))
                         sb.append("\n🏆 TESTCASE TỐT! Đã phát hiện được code sai/chậm!\n");
 
-                    SwingUtilities.invokeLater(() -> taResult.setText(sb.toString()));
+                    SwingUtilities.invokeLater(() -> taResult.setText(taResult.getText() + sb.toString()));
                 }).start();
-            } catch (Exception ex) { taResult.setText("❌ " + ex.getMessage()); }
+            } catch (NumberFormatException ex) { 
+                taResult.setText("❌ Lỗi: Problem ID và Số lần chạy phải là số!\n" + ex.getMessage()); 
+            } catch (Exception ex) { 
+                taResult.setText("❌ Lỗi: " + ex.getMessage()); 
+                ex.printStackTrace();
+            }
         });
 
         return panel;
@@ -1223,6 +1175,146 @@ public class MainApp extends JFrame {
 
     private void showError(String msg) {
         JOptionPane.showMessageDialog(this, msg, "Lỗi", JOptionPane.ERROR_MESSAGE);
+    }
+
+    /**
+     * Parse thông tin đề từ text OCR
+     * @return [title, content, timeLimit, memoryLimit]
+     */
+    private String[] parseProblemInfoFromText(String text) {
+        String title = "";
+        String content = text;
+        String timeLimit = "1.0";
+        String memLimit = "256";
+        
+        String[] lines = text.split("\n");
+        if (lines.length > 0) {
+            // Dòng đầu tiên = tên đề (loại bỏ keywords)
+            title = lines[0]
+                .replaceAll("(?i)(tên đề|title|đề|problem)[:：]\\s*", "")
+                .trim();
+            if (title.length() > 100) title = title.substring(0, 100); // Giới hạn độ dài
+        }
+        
+        // Parse Time Limit (tìm số đi kèm với "time", "s", "giây", "second")
+        java.util.regex.Pattern timePattern = java.util.regex.Pattern.compile("(?i)(time|giây|second)[:：\\s]*([0-9.]+)");
+        java.util.regex.Matcher timeMatcher = timePattern.matcher(text);
+        if (timeMatcher.find()) {
+            timeLimit = timeMatcher.group(2);
+        }
+        
+        // Parse Memory Limit (tìm số đi kèm với "memory", "MB", "m", "bộ nhớ")
+        java.util.regex.Pattern memPattern = java.util.regex.Pattern.compile("(?i)(memory|bộ nhớ|mb)[:：\\s]*([0-9]+)");
+        java.util.regex.Matcher memMatcher = memPattern.matcher(text);
+        if (memMatcher.find()) {
+            memLimit = memMatcher.group(2);
+        }
+        
+        return new String[]{title, content, timeLimit, memLimit};
+    }
+
+    private void showProblemDetailsDialog(int problemId) {
+        try {
+            String[] problem = ProblemDAO.getProblem(problemId);
+            if (problem == null) {
+                showError("Không tìm thấy đề!");
+                return;
+            }
+            
+            String title = problem[1];
+            String content = problem[2];
+            String timeLimit = problem[3];
+            String memLimit = problem[4];
+            
+            JDialog dlg = new JDialog(this, "Chi tiết đề - " + title, true);
+            dlg.setSize(1200, 750);
+            dlg.setLayout(new BorderLayout(8, 8));
+            dlg.getContentPane().setBackground(BG);
+            dlg.getRootPane().setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+            
+            // Header
+            JPanel header = new JPanel(new GridLayout(1, 4, 20, 0));
+            header.setBackground(BG);
+            header.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
+            
+            header.add(makeLabel("Tên đề:", title, 12));
+            header.add(makeLabel("ID:", "" + problemId, 12));
+            header.add(makeLabel("Time Limit:", timeLimit + " s", 12));
+            header.add(makeLabel("Memory Limit:", memLimit + " MB", 12));
+            
+            dlg.add(header, BorderLayout.NORTH);
+            
+            // Content
+            JTextArea taContent = makeCodeArea();
+            taContent.setText(content);
+            taContent.setEditable(false);
+            taContent.setLineWrap(false);
+            JPanel contentPanel = card("Nội dung đề", darkScroll(taContent));
+            
+            // Testcases
+            DefaultTableModel tcModel = new DefaultTableModel(new String[]{"#", "Input", "Output", "Type"}, 0) {
+                public boolean isCellEditable(int r, int c) { return false; }
+            };
+            JTable tcTable = new JTable(tcModel);
+            styleTable(tcTable);
+            tcTable.getColumnModel().getColumn(0).setMaxWidth(40);
+            tcTable.getColumnModel().getColumn(3).setMaxWidth(80);
+            tcTable.setRowHeight(24);
+            
+            List<String[]> testcases = TestcaseDAO.getTestcases(problemId);
+            int tcCount = 1;
+            for (String[] tc : testcases) {
+                tcModel.addRow(new String[]{String.valueOf(tcCount++), tc[1], tc[2], tc[3]});
+            }
+            
+            JPanel tcPanel;
+            if (testcases.isEmpty()) {
+                tcPanel = new JPanel(new BorderLayout());
+                tcPanel.setBackground(BG);
+                JLabel lbl = new JLabel("(Chưa có testcase)");
+                lbl.setForeground(MUTED);
+                lbl.setFont(BODY_FONT);
+                lbl.setHorizontalAlignment(JLabel.CENTER);
+                tcPanel.add(lbl, BorderLayout.CENTER);
+            } else {
+                tcPanel = card("Test Cases (" + testcases.size() + ")", darkScroll(tcTable));
+            }
+            
+            JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, contentPanel, tcPanel);
+            split.setDividerLocation(600);
+            split.setBackground(BG);
+            split.setDividerSize(4);
+            split.setContinuousLayout(true);
+            dlg.add(split, BorderLayout.CENTER);
+            
+            // Footer
+            JButton btnClose = makeBtn("Đóng", ACCENT);
+            JPanel footer = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+            footer.setBackground(BG);
+            footer.add(btnClose);
+            dlg.add(footer, BorderLayout.SOUTH);
+            
+            btnClose.addActionListener(e -> dlg.dispose());
+            
+            dlg.setLocationRelativeTo(this);
+            dlg.setVisible(true);
+        } catch (Exception e) {
+            showError("Lỗi tải chi tiết: " + e.getMessage());
+        }
+    }
+
+    private JPanel makeLabel(String key, String value, int fontSize) {
+        JPanel p = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        p.setBackground(BG);
+        JLabel lKey = new JLabel(key);
+        lKey.setFont(new Font("Tahoma", Font.BOLD, fontSize));
+        lKey.setForeground(MUTED);
+        JLabel lVal = new JLabel(value);
+        lVal.setFont(new Font("Tahoma", Font.PLAIN, fontSize));
+        lVal.setForeground(TEXT);
+        p.add(lKey);
+        p.add(lVal);
+        return p;
     }
 
     public static void main(String[] args) {

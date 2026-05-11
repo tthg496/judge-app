@@ -83,29 +83,24 @@ public class DatabaseManager {
     public static Connection getConnection() throws SQLException {
         synchronized (LOCK) {
             if (conn == null || conn.isClosed()) {
-                String auth = env("SQLSERVER_AUTH");
-                boolean forceWindowsAuth = "windows".equalsIgnoreCase(auth);
-                boolean forceSqlAuth = "sql".equalsIgnoreCase(auth);
-                String user = forceWindowsAuth ? null : env("SQLSERVER_USER");
-                String password = forceWindowsAuth ? null : env("SQLSERVER_PASSWORD");
-                if (forceSqlAuth) {
-                    if (user == null) user = "sa";
-                    if (password == null) password = "123456";
-                }
-                boolean hasSqlLogin = user != null && password != null;
+                // Sử dụng tài khoản SA với SQL Server Authentication
+                String user = env("SQLSERVER_USER");
+                String password = env("SQLSERVER_PASSWORD");
+                
+                if (user == null) user = "sa";
+                if (password == null) password = "123456";
+                
                 try {
-                    conn = connectToConfiguredDatabase(user, password, hasSqlLogin);
-                } catch (UnsatisfiedLinkError | Exception e) {
-                    if (e.getMessage() != null && e.getMessage().contains("integrated authentication") || e instanceof UnsatisfiedLinkError) {
-                        System.err.println("======================================================");
-                        System.err.println("❌ LỖI WINDOWS AUTHENTICATION (THIẾU FILE DLL) ❌");
-                        System.err.println("Vì bạn dùng Windows Auth, Java cần file 'mssql-jdbc_auth-13.4.0.x64.dll' hoặc DLL auth đúng với version mssql-jdbc đang dùng.");
-                        System.err.println("Cách sửa lỗi nhanh nhất:");
-                        System.err.println("1. Tải bộ mssql-jdbc từ Microsoft.");
-                        System.err.println("2. Copy file mssql-jdbc_auth-13.4.0.x64.dll vào thư mục gốc của project (hoặc thư mục bin của JDK).");
-                        System.err.println("Hoặc đơn giản nhất là chuyển sang dùng SQL Server Authentication (tài khoản sa).");
-                        System.err.println("======================================================");
-                    }
+                    System.out.println("🔐 Đang kết nối với tài khoản: " + user);
+                    conn = connectToConfiguredDatabase(user, password, true);
+                } catch (SQLException e) {
+                    System.err.println("======================================================");
+                    System.err.println("❌ LỖI KẾT NỐI CÓ SỬ DỤNG TÀI KHOẢN SA ❌");
+                    System.err.println("Vui lòng kiểm tra:");
+                    System.err.println("1. SQL Server đang chạy và có đang lắng nghe trên localhost:1433");
+                    System.err.println("2. Tài khoản 'sa' và mật khẩu là đúng");
+                    System.err.println("3. Biến môi trường SQLSERVER_USER và SQLSERVER_PASSWORD (nếu cần thay đổi)");
+                    System.err.println("======================================================");
                     throw new SQLException("Lỗi kết nối DB: " + e.getMessage(), e);
                 }
             }

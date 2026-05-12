@@ -527,6 +527,10 @@ public class MainApp extends JFrame {
         lblStatus.setFont(BODY_FONT);
         lblStatus.setForeground(MUTED);
         List<String[]> pendingTestcases = new ArrayList<>();
+        final String[] generatorCode = {null};
+        final String[] checkerCode = {null};
+        final String[] sampleACCode = {null};
+        final String[] sampleACLanguage = {"Java"};
 
         JLabel lblImagePath = new JLabel("Chưa chọn ảnh/file");
         lblImagePath.setForeground(MUTED);
@@ -780,8 +784,9 @@ public class MainApp extends JFrame {
             new Thread(() -> {
                 try {
                     String code = GeminiAPI.generateGeneratorCode(content);
+                    generatorCode[0] = code;
                     SwingUtilities.invokeLater(() -> {
-                        showCodeDialog("Code Generator (Java)", code);
+                        showCodeDialog("Code Generator (Java)", code, edited -> generatorCode[0] = edited);
                         lblStatus.setForeground(GREEN);
                         lblStatus.setText("✅ AI sinh Generator xong!");
                     });
@@ -803,8 +808,9 @@ public class MainApp extends JFrame {
             new Thread(() -> {
                 try {
                     String code = GeminiAPI.generateCheckerCode(content);
+                    checkerCode[0] = code;
                     SwingUtilities.invokeLater(() -> {
-                        showCodeDialog("Code Checker (Java)", code);
+                        showCodeDialog("Code Checker (Java)", code, edited -> checkerCode[0] = edited);
                         lblStatus.setForeground(GREEN);
                         lblStatus.setText("✅ AI sinh Checker xong!");
                     });
@@ -831,8 +837,10 @@ public class MainApp extends JFrame {
             new Thread(() -> {
                 try {
                     String code = GeminiAPI.generateSampleCode(content, lang);
+                    sampleACCode[0] = code;
+                    sampleACLanguage[0] = lang;
                     SwingUtilities.invokeLater(() -> {
-                        showCodeDialog("Code mẫu AC (" + lang + ")", code);
+                        showCodeDialog("Code mẫu AC (" + lang + ")", code, edited -> sampleACCode[0] = edited);
                         lblStatus.setForeground(GREEN);
                         lblStatus.setText("✅ AI sinh code mẫu xong!");
                     });
@@ -861,7 +869,8 @@ public class MainApp extends JFrame {
                 if (content.isEmpty()) { showError("Nhập nội dung đề!"); return; }
                 
                 // Lưu đề (không bắt buộc testcase)
-                int id = ProblemDAO.addProblem(title, content, tl, ml);
+                int id = ProblemDAO.addProblem(title, content, tl, ml,
+                    generatorCode[0], checkerCode[0], sampleACCode[0], sampleACLanguage[0]);
                 
                 // Lưu testcase nếu có
                 if (!pendingTestcases.isEmpty()) {
@@ -881,6 +890,10 @@ public class MainApp extends JFrame {
                 lblImagePath.setText("Chưa chọn ảnh/file");
                 lblImagePath.setForeground(MUTED);
                 pendingTestcases.clear();
+                generatorCode[0] = null;
+                checkerCode[0] = null;
+                sampleACCode[0] = null;
+                sampleACLanguage[0] = "Java";
                 tcModel.setRowCount(0);
                 refreshProblemTable();
             } catch (Exception ex) {
@@ -946,6 +959,20 @@ public class MainApp extends JFrame {
             int finalCount = count;
             new Thread(() -> {
                 try {
+                    if (generatorCode[0] != null && sampleACCode[0] != null) {
+                        List<String[]> generated = generateTestcasesFromGenerator(
+                            generatorCode[0], sampleACCode[0], sampleACLanguage[0], finalCount, 5.0);
+                        SwingUtilities.invokeLater(() -> {
+                            for (String[] tc : generated) {
+                                pendingTestcases.add(tc);
+                                tcModel.addRow(new String[]{tc[0], tc[1], tc[2]});
+                            }
+                            lblStatus.setForeground(GREEN);
+                            lblStatus.setText("Da sinh " + generated.size() + " testcase bang Generator + Code AC.");
+                        });
+                        return;
+                    }
+
                     String prompt = """
                         Dựa trên đề bài sau:
                         %s
@@ -1088,7 +1115,7 @@ public class MainApp extends JFrame {
                 
                 int probId = Integer.parseInt(probIdStr);
                 int runs = Integer.parseInt(tfRuns.getText().trim());
-                String lang = (String) cbLang.getSelectedItem();
+                String selectedLang = (String) cbLang.getSelectedItem();
                 
                 String[] prob = ProblemDAO.getProblem(probId);
                 if (prob == null) { 
@@ -1103,19 +1130,37 @@ public class MainApp extends JFrame {
                     return; 
                 }
                 
+                String checkerForProblem = getProblemArtifact(prob, 6);
+                String savedAC = getProblemArtifact(prob, 7);
+                String savedACLanguage = getProblemArtifact(prob, 8);
+
                 String codeAC = normalizedSubmittedCode(taAC.getText());
                 String codeWA = normalizedSubmittedCode(taWA.getText());
                 String codeTLE = normalizedSubmittedCode(taTLE.getText());
+                String acLanguage = selectedLang;
+                if (codeAC == null && savedAC != null) {
+                    codeAC = savedAC;
+                    acLanguage = savedACLanguage == null ? "Java" : savedACLanguage;
+                    taAC.setText(savedAC);
+                    cbLang.setSelectedItem(acLanguage);
+                }
                 if (codeAC == null && codeWA == null && codeTLE == null) {
                     taResult.setText("Lỗi: Hãy nhập ít nhất một code mẫu AC, WA hoặc TLE!");
                     return;
                 }
 
                 taResult.setText("⏳ Chuẩn bị kiểm tra độ mạnh " + Math.min(runs, tcs.size()) + " testcase...\n");
+                final String runACLanguage = acLanguage;
+                final String runLanguage = selectedLang;
+                final String runCodeAC = codeAC;
+                final String runCodeWA = codeWA;
+                final String runCodeTLE = codeTLE;
+                final String runChecker = checkerForProblem;
                 taResult.append("   Problem: " + prob[1] + " (ID=" + probId + ")\n");
                 taResult.append("   Time Limit: " + tl + "s\n");
                 taResult.append("   Testcase có: " + tcs.size() + "\n");
-                taResult.append("   Language: " + lang + "\n\n");
+                taResult.append("   Language: " + runLanguage + "\n");
+                taResult.append("   Checker: " + (runChecker == null ? "default compare" : "custom checker") + "\n\n");
                 int runVersion = resultVersion[0];
                 
                 new Thread(() -> {
@@ -1132,9 +1177,9 @@ public class MainApp extends JFrame {
                         sb.append(String.format("Test #%d:", i + 1));
 
                         // AC code
-                        if (codeAC != null) {
-                            String[] resAC = Judge.run(codeAC, input, tl, lang);
-                            String acVerdict = judgeVerdict(expected, resAC[0]);
+                        if (runCodeAC != null) {
+                            String[] resAC = Judge.run(runCodeAC, input, tl, runACLanguage);
+                            String acVerdict = judgeVerdict(expected, resAC[0], input, runChecker, tl);
                             if (acVerdict.equals("AC")) acPassed++;
 
                             sb.append(" Code AC=").append(acVerdict);
@@ -1144,9 +1189,9 @@ public class MainApp extends JFrame {
                         }
 
                         // WA code
-                        if (codeWA != null) {
-                            String[] resWA = Judge.run(codeWA, input, tl, lang);
-                            String waVerdict = judgeVerdict(expected, resWA[0]);
+                        if (runCodeWA != null) {
+                            String[] resWA = Judge.run(runCodeWA, input, tl, runLanguage);
+                            String waVerdict = judgeVerdict(expected, resWA[0], input, runChecker, tl);
                             if (waVerdict.equals("WA")) {
                                 waDetected++;
                                 sb.append("  Code WA=BAT_DUOC_SAI(WA)");
@@ -1160,9 +1205,9 @@ public class MainApp extends JFrame {
                         }
 
                         // TLE code
-                        if (codeTLE != null) {
-                            String[] resTLE = Judge.run(codeTLE, input, tl, lang);
-                            String tleVerdict = judgeVerdict(expected, resTLE[0]);
+                        if (runCodeTLE != null) {
+                            String[] resTLE = Judge.run(runCodeTLE, input, tl, runLanguage);
+                            String tleVerdict = judgeVerdict(expected, resTLE[0], input, runChecker, tl);
                             if (tleVerdict.equals("TLE")) {
                                 tleDetected++;
                                 sb.append("  Code TLE=BAT_DUOC_CHAM(TLE)");
@@ -1179,9 +1224,9 @@ public class MainApp extends JFrame {
                     }
 
                     appendStressSummary(sb, total,
-                        codeAC != null, acPassed,
-                        codeWA != null, waDetected, waPassed, waOther,
-                        codeTLE != null, tleDetected, tlePassed, tleOther);
+                        runCodeAC != null, acPassed,
+                        runCodeWA != null, waDetected, waPassed, waOther,
+                        runCodeTLE != null, tleDetected, tlePassed, tleOther);
 
                     SwingUtilities.invokeLater(() -> {
                         if (runVersion == resultVersion[0]) {
@@ -1214,8 +1259,38 @@ public class MainApp extends JFrame {
         return code;
     }
 
-    private String judgeVerdict(String expected, String actual) {
-        return isSystemVerdict(actual) ? actual : Judge.check(expected, actual);
+    private List<String[]> generateTestcasesFromGenerator(String generatorCode, String acCode,
+            String acLanguage, int count, double timeLimit) throws Exception {
+        List<String[]> generated = new ArrayList<>();
+        String language = (acLanguage == null || acLanguage.isBlank()) ? "Java" : acLanguage;
+
+        for (int i = 0; i < count; i++) {
+            String[] genResult = Judge.run(generatorCode, "", timeLimit, "Java");
+            if (isSystemVerdict(genResult[0])) {
+                throw new Exception("Generator " + genResult[0] + ": "
+                    + (genResult.length > 2 ? genResult[2] : ""));
+            }
+
+            String input = genResult[0].trim();
+            String[] acResult = Judge.run(acCode, input, timeLimit, language);
+            if (isSystemVerdict(acResult[0])) {
+                throw new Exception("Code AC " + acResult[0] + " khi sinh expected: "
+                    + (acResult.length > 2 ? acResult[2] : ""));
+            }
+
+            generated.add(new String[]{input, acResult[0].trim(), "Hidden"});
+        }
+        return generated;
+    }
+
+    private String judgeVerdict(String expected, String actual, String input, String checkerCode, double timeLimit) {
+        return isSystemVerdict(actual) ? actual : Judge.check(expected, actual, input, checkerCode, timeLimit);
+    }
+
+    private String getProblemArtifact(String[] problem, int index) {
+        if (problem == null || problem.length <= index) return null;
+        String value = problem[index];
+        return value == null || value.isBlank() ? null : value;
     }
 
     private void appendFailureDetails(StringBuilder sb, String input, String expected, String[] result) {
@@ -1388,6 +1463,10 @@ public class MainApp extends JFrame {
     }
 
     private void showCodeDialog(String title, String code) {
+        showCodeDialog(title, code, null);
+    }
+
+    private void showCodeDialog(String title, String code, java.util.function.Consumer<String> onUse) {
         JTextArea ta = makeCodeArea();
         ta.setText(code);
         JDialog dlg = new JDialog(this, title, false);
@@ -1396,10 +1475,19 @@ public class MainApp extends JFrame {
         JButton btnCopy = makeBtn("Copy", ACCENT);
         btnCopy.addActionListener(ev -> {
             java.awt.Toolkit.getDefaultToolkit().getSystemClipboard()
-                .setContents(new java.awt.datatransfer.StringSelection(code), null);
+                .setContents(new java.awt.datatransfer.StringSelection(ta.getText()), null);
             JOptionPane.showMessageDialog(dlg, "Đã copy!");
         });
         JPanel bot = new JPanel(); bot.setBackground(BG); bot.add(btnCopy);
+        if (onUse != null) {
+            JButton btnUse = makeBtn("Luu vao de", GREEN);
+            btnUse.addActionListener(ev -> {
+                onUse.accept(ta.getText());
+                JOptionPane.showMessageDialog(dlg, "Da luu code nay vao de tam. Bam 'Luu de' de ghi vao CSDL.");
+                dlg.dispose();
+            });
+            bot.add(btnUse);
+        }
         dlg.add(bot, BorderLayout.SOUTH);
         dlg.setLocationRelativeTo(this);
         dlg.setVisible(true);

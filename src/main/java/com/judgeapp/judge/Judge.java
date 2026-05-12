@@ -76,4 +76,30 @@ public class Judge {
         if (expected.trim().equals(actual.trim())) return "AC";
         return "WA";
     }
+
+    public static String check(String expected, String actual, String input, String checkerCode, double timeLimit) {
+        if (checkerCode == null || checkerCode.isBlank()) {
+            return check(expected, actual);
+        }
+
+        String checkerInput = """
+            __INPUT__
+            %s
+            __EXPECTED__
+            %s
+            __ACTUAL__
+            %s
+            __END__
+            """.formatted(
+                input == null ? "" : input,
+                expected == null ? "" : expected,
+                actual == null ? "" : actual
+            );
+
+        String[] result = run(checkerCode, checkerInput, timeLimit, "Java");
+        String verdict = result[0] == null ? "" : result[0].trim().toUpperCase();
+        if (verdict.startsWith("AC")) return "AC";
+        if (verdict.startsWith("WA")) return "WA";
+        return "CHECKER_" + (verdict.isEmpty() ? "ERR" : verdict);
+    }
 }

@@ -154,6 +154,26 @@ public class DatabaseManager {
                     )
                 END
             """);
+
+            stmt.execute("""
+                IF COL_LENGTH('dbo.problems', 'generator_code') IS NULL
+                    ALTER TABLE problems ADD generator_code NVARCHAR(MAX) NULL
+            """);
+
+            stmt.execute("""
+                IF COL_LENGTH('dbo.problems', 'checker_code') IS NULL
+                    ALTER TABLE problems ADD checker_code NVARCHAR(MAX) NULL
+            """);
+
+            stmt.execute("""
+                IF COL_LENGTH('dbo.problems', 'sample_ac_code') IS NULL
+                    ALTER TABLE problems ADD sample_ac_code NVARCHAR(MAX) NULL
+            """);
+
+            stmt.execute("""
+                IF COL_LENGTH('dbo.problems', 'sample_ac_language') IS NULL
+                    ALTER TABLE problems ADD sample_ac_language NVARCHAR(30) NULL
+            """);
         }
         System.out.println("✅ SQL Server database initialized!");
     }

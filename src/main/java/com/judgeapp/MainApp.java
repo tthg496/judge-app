@@ -526,7 +526,7 @@ public class MainApp extends JFrame {
         lblStatus.setForeground(MUTED);
         List<String[]> pendingTestcases = new ArrayList<>();
 
-        JLabel lblImagePath = new JLabel("Chưa chọn file");
+        JLabel lblImagePath = new JLabel("Chưa chọn ảnh/file");
         lblImagePath.setForeground(MUTED);
         lblImagePath.setFont(BODY_FONT);
         lblImagePath.setBorder(BorderFactory.createCompoundBorder(
@@ -535,8 +535,8 @@ public class MainApp extends JFrame {
         ));
         lblImagePath.setOpaque(true);
         lblImagePath.setBackground(Color.WHITE);
-        JButton btnPickImg = makeBtn("Chọn file", new Color(59, 130, 246));
-        JButton btnOCR = makeBtn("Đọc nội dung file", new Color(139, 92, 246));
+        JButton btnPickImg = makeBtn("Chọn ảnh/file", new Color(59, 130, 246));
+        JButton btnOCR = makeBtn("AI đọc ảnh/file", new Color(139, 92, 246));
         JPanel imgRow = new JPanel(new BorderLayout(6, 0));
         imgRow.setBackground(BG);
         imgRow.add(lblImagePath, BorderLayout.CENTER);
@@ -611,7 +611,7 @@ public class MainApp extends JFrame {
         g.weighty = 0;
         g.fill = GridBagConstraints.HORIZONTAL;
         g.insets = new Insets(0, 0, 8, 0);
-        problemForm.add(makeLabel("Nhập từ file (ảnh/text/PDF - tùy chọn)"), g);
+        problemForm.add(makeLabel("Ảnh đề (tùy chọn)"), g);
         g.gridy = 5;
         problemForm.add(imgRow, g);
 
@@ -686,15 +686,7 @@ public class MainApp extends JFrame {
                 "File PDF", "pdf"));
             if (fc.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
                 imagePath[0] = fc.getSelectedFile().getAbsolutePath();
-                String fileName = fc.getSelectedFile().getName();
-                String ext = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
-                String fileType = switch (ext) {
-                    case "jpg", "jpeg", "png", "bmp", "gif" -> "📷 Ảnh: ";
-                    case "txt", "md" -> "📄 Text: ";
-                    case "pdf" -> "📕 PDF: ";
-                    default -> "📁 File: ";
-                };
-                lblImagePath.setText(fileType + fileName);
+                lblImagePath.setText(fc.getSelectedFile().getName());
                 lblImagePath.setForeground(TEXT);
             }
         });
@@ -884,7 +876,7 @@ public class MainApp extends JFrame {
                 // Reset form
                 tfTitle.setText(""); taContent.setText(""); taTcInput.setText("Nhập input testcase..."); taTcOutput.setText("Nhập expected output...");
                 imagePath[0] = null;
-                lblImagePath.setText("Chưa chọn file");
+                lblImagePath.setText("Chưa chọn ảnh/file");
                 lblImagePath.setForeground(MUTED);
                 pendingTestcases.clear();
                 tcModel.setRowCount(0);

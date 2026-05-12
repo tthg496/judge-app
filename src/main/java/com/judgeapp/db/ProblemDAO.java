@@ -47,4 +47,22 @@ public class ProblemDAO {
         }
         return null;
     }
+
+    public static void updateProblem(int id, String title, String content, double timeLimit, int memoryLimit) throws SQLException {
+        String sql = "UPDATE problems SET title=?, content=?, time_limit=?, memory_limit=? WHERE id=?";
+        PreparedStatement ps = DatabaseManager.getConnection().prepareStatement(sql);
+        ps.setString(1, title);
+        ps.setString(2, content);
+        ps.setDouble(3, timeLimit);
+        ps.setInt(4, memoryLimit);
+        ps.setInt(5, id);
+        ps.executeUpdate();
+    }
+
+    public static void deleteProblem(int id) throws SQLException {
+        PreparedStatement ps = DatabaseManager.getConnection()
+            .prepareStatement("DELETE FROM problems WHERE id=?");
+        ps.setInt(1, id);
+        ps.executeUpdate();
+    }
 }

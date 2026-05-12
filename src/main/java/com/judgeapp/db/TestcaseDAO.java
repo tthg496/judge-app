@@ -37,4 +37,21 @@ public class TestcaseDAO {
         ps.setInt(1, problemId);
         ps.executeUpdate();
     }
+
+    public static void updateTestcase(int id, String input, String expectedOutput, boolean isSample) throws SQLException {
+        String sql = "UPDATE testcases SET input=?, expected_output=?, is_sample=? WHERE id=?";
+        PreparedStatement ps = DatabaseManager.getConnection().prepareStatement(sql);
+        ps.setString(1, input);
+        ps.setString(2, expectedOutput);
+        ps.setInt(3, isSample ? 1 : 0);
+        ps.setInt(4, id);
+        ps.executeUpdate();
+    }
+
+    public static void deleteTestcase(int id) throws SQLException {
+        PreparedStatement ps = DatabaseManager.getConnection()
+            .prepareStatement("DELETE FROM testcases WHERE id=?");
+        ps.setInt(1, id);
+        ps.executeUpdate();
+    }
 }

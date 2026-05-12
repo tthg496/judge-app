@@ -421,6 +421,7 @@ public class MainApp extends JFrame {
         JButton btnRefresh = makeBtn("Làm mới", ACCENT);
         JButton btnViewDetails = makeBtn("Xem chi tiết", new Color(99, 102, 241));
         JButton btnManageTc = makeBtn("Quản lý testcase", new Color(14, 165, 233));
+        JButton btnDelete = makeBtn("Xóa đề", RED);
         btnRefresh.addActionListener(e -> refreshProblemTable());
         btnViewDetails.addActionListener(e -> {
             int row = problemTable.getSelectedRow();
@@ -441,10 +442,33 @@ public class MainApp extends JFrame {
             String title = problemModel.getValueAt(row, 1).toString();
             showTestcaseManagerDialog(problemId, title);
         });
+        btnDelete.addActionListener(e -> {
+            int row = problemTable.getSelectedRow();
+            if (row < 0) {
+                showError("Chọn một đề trong danh sách trước!");
+                return;
+            }
+            int problemId = Integer.parseInt(problemModel.getValueAt(row, 0).toString());
+            String title = problemModel.getValueAt(row, 1).toString();
+            int confirm = JOptionPane.showConfirmDialog(this, 
+                "Bạn chắc chắn muốn xóa đề: " + title + " và tất cả test case của nó?",
+                "Xác nhận xóa", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (confirm == JOptionPane.YES_OPTION) {
+                try {
+                    TestcaseDAO.deleteTestcasesByProblem(problemId);
+                    ProblemDAO.deleteProblem(problemId);
+                    showSuccess("Xóa đề thành công!");
+                    refreshProblemTable();
+                } catch (Exception ex) {
+                    showError("Lỗi xóa đề: " + ex.getMessage());
+                }
+            }
+        });
         JPanel south = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         south.setBackground(BG);
         south.add(btnViewDetails);
         south.add(btnManageTc);
+        south.add(btnDelete);
         south.add(btnRefresh);
         panel.add(south, BorderLayout.SOUTH);
         return panel;
@@ -480,7 +504,7 @@ public class MainApp extends JFrame {
         lblStatus.setForeground(MUTED);
         List<String[]> pendingTestcases = new ArrayList<>();
 
-        JLabel lblImagePath = new JLabel("Chưa chọn ảnh");
+        JLabel lblImagePath = new JLabel("Chưa chọn ảnh/file");
         lblImagePath.setForeground(MUTED);
         lblImagePath.setFont(BODY_FONT);
         lblImagePath.setBorder(BorderFactory.createCompoundBorder(
@@ -489,8 +513,8 @@ public class MainApp extends JFrame {
         ));
         lblImagePath.setOpaque(true);
         lblImagePath.setBackground(Color.WHITE);
-        JButton btnPickImg = makeBtn("Chọn ảnh đề", new Color(59, 130, 246));
-        JButton btnOCR = makeBtn("AI đọc ảnh", new Color(139, 92, 246));
+        JButton btnPickImg = makeBtn("Chọn ảnh/file", new Color(59, 130, 246));
+        JButton btnOCR = makeBtn("AI đọc ảnh/file", new Color(139, 92, 246));
         JPanel imgRow = new JPanel(new BorderLayout(6, 0));
         imgRow.setBackground(BG);
         imgRow.add(lblImagePath, BorderLayout.CENTER);
@@ -626,12 +650,12 @@ public class MainApp extends JFrame {
         south.add(lblStatus, BorderLayout.SOUTH);
         panel.add(south, BorderLayout.SOUTH);
 
-        // === Image pick ===
+        // === Image/File pick ===
         final String[] imagePath = {null};
         btnPickImg.addActionListener(e -> {
             JFileChooser fc = new JFileChooser();
             fc.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
-                "Image files", "jpg", "jpeg", "png", "bmp"));
+                "Image & Text files", "jpg", "jpeg", "png", "bmp", "txt", "md"));
             if (fc.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
                 imagePath[0] = fc.getSelectedFile().getAbsolutePath();
                 lblImagePath.setText(fc.getSelectedFile().getName());
@@ -639,16 +663,39 @@ public class MainApp extends JFrame {
             }
         });
 
-        // === AI đọc ảnh (OCR) ===
+        // === AI đọc ảnh/file ===
         btnOCR.addActionListener(e -> {
-            if (imagePath[0] == null) { showError("Chọn ảnh trước!"); return; }
-            lblStatus.setForeground(YELLOW);
-            lblStatus.setText("⏳ Tesseract OCR đang đọc ảnh...");
+            if (imagePath[0] == null) { showError("Chọn ảnh hoặc file trước!"); return; }
+            
+            String filePath = imagePath[0].toLowerCase();
+            boolean isImage = filePath.endsWith(".jpg") || filePath.endsWith(".jpeg") 
+                           || filePath.endsWith(".png") || filePath.endsWith(".bmp");
+            boolean isTextFile = filePath.endsWith(".txt") || filePath.endsWith(".md");
+            
+            if (!isImage && !isTextFile) {
+                showError("Định dạng file không hỗ trợ!");
+                return;
+            }
+            
+            if (isImage) {
+                lblStatus.setForeground(YELLOW);
+                lblStatus.setText("⏳ Tesseract OCR đang đọc ảnh...");
+            } else {
+                lblStatus.setForeground(YELLOW);
+                lblStatus.setText("⏳ Đang đọc file...");
+            }
+            
             new Thread(() -> {
                 try {
-                    String text = OCRManager.readImageText(imagePath[0]);
+                    String text;
+                    if (isImage) {
+                        text = OCRManager.readImageText(imagePath[0]);
+                    } else {
+                        text = new String(Files.readAllBytes(new File(imagePath[0]).toPath()), "UTF-8");
+                    }
+                    
                     SwingUtilities.invokeLater(() -> {
-                        // Parse thông tin từ text OCR
+                        // Parse thông tin từ text
                         String[] info = parseProblemInfoFromText(text);
                         String title = info[0];
                         String content = info[1];
@@ -662,7 +709,8 @@ public class MainApp extends JFrame {
                         if (!memLimit.isEmpty()) tfMem.setText(memLimit);
                         
                         lblStatus.setForeground(GREEN);
-                        lblStatus.setText("✅ OCR đọc & parse xong! Tên: " + title);
+                        String msgType = isImage ? "OCR" : "File";
+                        lblStatus.setText("✅ " + msgType + " đọc & parse xong! Tên: " + title);
                     });
                 } catch (Exception ex) {
                     SwingUtilities.invokeLater(() -> {
@@ -1199,6 +1247,10 @@ public class MainApp extends JFrame {
 
     private void showError(String msg) {
         JOptionPane.showMessageDialog(this, msg, "Lỗi", JOptionPane.ERROR_MESSAGE);
+    }
+
+    private void showSuccess(String msg) {
+        JOptionPane.showMessageDialog(this, msg, "Thành công", JOptionPane.INFORMATION_MESSAGE);
     }
 
     /**

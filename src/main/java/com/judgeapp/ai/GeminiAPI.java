@@ -8,44 +8,110 @@ import java.util.*;
 import com.google.gson.*;
 
 public class GeminiAPI {
-    private static final String API_KEY = "AIzaSyB09pHheEENBogmOnSAji3A0PYtsRgrZ8U";
-    private static final String URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + API_KEY;
+    // Ollama config (chạy local, không cần API key)
+    private static final String OLLAMA_URL = "http://localhost:11434/api/generate";
+    private static final String MODEL = "mistral"; // Hoặc "llama2", "phi" (phải download trước)
+    
+    // Caching for repeated prompts (Simple in-memory cache)
+    private static final Map<String, String> responseCache = new HashMap<>();
+    
+    // Rate limiting: track last request time
+    private static long lastRequestTime = 0;
+    private static final long MIN_REQUEST_INTERVAL_MS = 500; // 500ms cho local LLM
 
     private static String call(String jsonBody) throws Exception {
-        HttpRequest req = HttpRequest.newBuilder()
-            .uri(URI.create(URL))
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-            .build();
-        HttpResponse<String> res = HttpClient.newHttpClient().send(req, HttpResponse.BodyHandlers.ofString());
-        JsonObject json = JsonParser.parseString(res.body()).getAsJsonObject();
-        if (json.has("error")) throw new Exception(json.get("error").getAsJsonObject().get("message").getAsString());
-        return json.getAsJsonArray("candidates").get(0).getAsJsonObject()
-            .getAsJsonObject("content").getAsJsonArray("parts")
-            .get(0).getAsJsonObject().get("text").getAsString();
+        // Implement rate limiting - wait if needed
+        long timeSinceLastRequest = System.currentTimeMillis() - lastRequestTime;
+        if (timeSinceLastRequest < MIN_REQUEST_INTERVAL_MS) {
+            Thread.sleep(MIN_REQUEST_INTERVAL_MS - timeSinceLastRequest);
+        }
+        
+        try {
+            // Ollama request
+            String ollamaRequest = new Gson().toJson(Map.of(
+                "model", MODEL,
+                "prompt", extractPromptFromJson(jsonBody),
+                "stream", false
+            ));
+            
+            HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create(OLLAMA_URL))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(ollamaRequest))
+                .build();
+            
+            HttpResponse<String> res = HttpClient.newHttpClient()
+                .send(req, HttpResponse.BodyHandlers.ofString());
+            
+            lastRequestTime = System.currentTimeMillis();
+            
+            if (res.statusCode() != 200) {
+                String errorMsg = res.body();
+                if (res.statusCode() == 500 && errorMsg.contains("unknown model")) {
+                    throw new Exception("Model '" + MODEL + "' chưa được download. Chạy: ollama pull " + MODEL);
+                }
+                throw new Exception("Ollama lỗi (HTTP " + res.statusCode() + "): " + errorMsg);
+            }
+            
+            // Parse Ollama response
+            JsonObject json = JsonParser.parseString(res.body()).getAsJsonObject();
+            String response = json.get("response").getAsString();
+            
+            if (response == null || response.trim().isEmpty()) {
+                throw new Exception("Ollama không trả về response");
+            }
+            
+            return response.trim();
+            
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new Exception("Request bị interrupt: " + e.getMessage(), e);
+        } catch (Exception e) {
+            if (e.getMessage().contains("Connection refused")) {
+                throw new Exception("Ollama chưa chạy! Chạy: ollama serve", e);
+            }
+            throw e;
+        }
+    }
+    
+    // Extract prompt from Gemini JSON format
+    private static String extractPromptFromJson(String jsonBody) throws Exception {
+        try {
+            JsonObject json = JsonParser.parseString(jsonBody).getAsJsonObject();
+            return json.getAsJsonArray("contents")
+                .get(0).getAsJsonObject()
+                .getAsJsonArray("parts")
+                .get(0).getAsJsonObject()
+                .get("text").getAsString();
+        } catch (Exception e) {
+            return jsonBody; // Fallback
+        }
     }
 
     public static String ask(String prompt) throws Exception {
+        // Check cache first
+        if (responseCache.containsKey(prompt)) {
+            System.out.println("[Cache Hit] Using cached response for prompt");
+            return responseCache.get(prompt);
+        }
+        
         String body = "{\"contents\":[{\"parts\":[{\"text\":" + new Gson().toJson(prompt) + "}]}]}";
-        return call(body);
+        String result = call(body);
+        
+        // Cache the result
+        responseCache.put(prompt, result);
+        return result;
     }
 
-    // Đọc ảnh đề bài bằng Gemini Vision
+    // Đọc ảnh đề bài bằng Ollama (Vision model nếu có)
     public static String readImageProblem(String imagePath) throws Exception {
-        byte[] imageBytes = Files.readAllBytes(Path.of(imagePath));
-        String base64 = Base64.getEncoder().encodeToString(imageBytes);
-        String ext = imagePath.substring(imagePath.lastIndexOf('.') + 1).toLowerCase();
-        String mimeType = ext.equals("png") ? "image/png" : "image/jpeg";
-
-        String body = new Gson().toJson(Map.of(
-            "contents", List.of(Map.of(
-                "parts", List.of(
-                    Map.of("inline_data", Map.of("mime_type", mimeType, "data", base64)),
-                    Map.of("text", "Đây là ảnh đề bài lập trình thi đấu. Hãy đọc và trích xuất toàn bộ nội dung đề bài bằng tiếng Việt, bao gồm: tên bài, mô tả, input format, output format, ràng buộc (constraints), và các ví dụ.")
-                )
-            ))
-        ));
-        return call(body);
+        // Ollama vision models: llava (requires special setup)
+        // Tạm thời: chỉ hỗ trợ text
+        throw new Exception("Ollama local không hỗ trợ vision API. " +
+            "Để dùng OCR ảnh, hãy:\n" +
+            "  1. Sử dụng Tesseract OCR trực tiếp\n" +
+            "  2. Hoặc nâng cấp lên paid Gemini plan\n" +
+            "  3. Hoặc dùng Groq API (miễn phí, có vision)");
     }
 
     // AI sinh code Generator (sinh testcase ngẫu nhiên)

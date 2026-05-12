@@ -49,7 +49,7 @@ public class MainApp extends JFrame {
         styleTabs(tabs);
         tabs.addTab("  Danh sách đề  ", buildProblemListPanel());
         tabs.addTab("  Thêm đề  ", buildAddProblemPanel());
-        tabs.addTab("  độ mạnh test case  ", buildStressPanel());
+        tabs.addTab("  Độ mạnh test case  ", buildStressPanel());
 
         JPanel root = new JPanel(new BorderLayout());
         root.setBackground(BG);
@@ -854,34 +854,58 @@ public class MainApp extends JFrame {
                         
                         Hãy sinh %d testcase chất lượng cao cho bài lập trình này.
                         Yêu cầu:
-                        - Trả về JSON array thuần, không markdown, không giải thích.
-                        - Mỗi phần tử có dạng:
-                          {"input":"...", "expectedOutput":"...", "isSample":false}
-                        - input/expectedOutput đúng format đề bài.
-                        - Bao phủ cả edge cases.
+                        - Chỉ trả về JSON array thuần (bắt đầu bằng [ kết thúc bằng ]), không markdown, không backticks, không giải thích.
+                        - Mỗi phần tử có dạng: {"input":"...", "expectedOutput":"...", "isSample":false}
+                        - input/expectedOutput phải đúng format đề bài.
+                        - Bao phủ cả edge cases, base case.
+                        - Dấu ngoặc kép trong input/output phải escape: \\" thay vì "
+                        VD: [{"input":"1\\n2","expectedOutput":"3","isSample":false}]
                         """.formatted(content, finalCount);
                     String raw = GeminiAPI.ask(prompt).trim();
+                    
+                    // Xóa markdown backticks nếu có
+                    raw = raw.replaceAll("```json\\s*", "").replaceAll("```\\s*", "").trim();
+                    
+                    // Tìm JSON array trong response
+                    int startIdx = raw.indexOf('[');
+                    int endIdx = raw.lastIndexOf(']');
+                    if (startIdx < 0 || endIdx < 0) {
+                        throw new Exception("Không tìm thấy JSON array trong response: " + raw.substring(0, Math.min(200, raw.length())));
+                    }
+                    raw = raw.substring(startIdx, endIdx + 1);
+                    
                     JsonArray arr = JsonParser.parseString(raw).getAsJsonArray();
                     SwingUtilities.invokeLater(() -> {
                         int added = 0;
                         for (JsonElement el : arr) {
-                            JsonObject obj = el.getAsJsonObject();
-                            String in = obj.get("input").getAsString();
-                            String out = obj.get("expectedOutput").getAsString();
-                            boolean isSample = obj.has("isSample") && obj.get("isSample").getAsBoolean();
-                            String type = isSample ? "Sample" : "Hidden";
-                            pendingTestcases.add(new String[]{in, out, type});
-                            tcModel.addRow(new String[]{in, out, type});
-                            added++;
+                            try {
+                                JsonObject obj = el.getAsJsonObject();
+                                String in = obj.get("input").getAsString();
+                                String out = obj.get("expectedOutput").getAsString();
+                                boolean isSample = obj.has("isSample") && obj.get("isSample").getAsBoolean();
+                                String type = isSample ? "Sample" : "Hidden";
+                                
+                                // Thêm vào pendingTestcases (sẽ lưu vào DB khi save problem)
+                                pendingTestcases.add(new String[]{in, out, type});
+                                tcModel.addRow(new String[]{in, out, type});
+                                added++;
+                            } catch (Exception innerEx) {
+                                System.err.println("Lỗi parse testcase: " + el + " | " + innerEx.getMessage());
+                            }
                         }
                         lblStatus.setForeground(GREEN);
-                        lblStatus.setText("✅ AI sinh " + added + " testcase thành công!");
+                        lblStatus.setText("✅ AI sinh " + added + " testcase thành công! (Tổng: " + pendingTestcases.size() + ")");
                     });
                 } catch (Exception ex) {
                     SwingUtilities.invokeLater(() -> {
+                        ex.printStackTrace();
+                        String msg = ex.getMessage();
+                        if (msg == null) msg = ex.getClass().getSimpleName();
                         lblStatus.setForeground(RED);
-                        lblStatus.setText("❌ AI sinh testcase lỗi: " + ex.getMessage());
+                        lblStatus.setText("❌ AI sinh testcase lỗi: " + msg);
                     });
+                    System.err.println("DEBUG: " + ex);
+                    ex.printStackTrace();
                 }
             }).start();
         });

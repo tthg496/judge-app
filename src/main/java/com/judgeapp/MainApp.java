@@ -1,21 +1,43 @@
 package com.judgeapp;
 
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Component;
+import java.awt.Cursor;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
+import java.awt.Font;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.GridLayout;
+import java.awt.Insets;
+import java.awt.LayoutManager;
+import java.awt.Rectangle;
+import java.awt.RenderingHints;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.io.File;
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.List;
+
+import javax.swing.*;
+import javax.swing.border.*;
+import javax.swing.plaf.basic.BasicButtonUI;
+import javax.swing.table.*;
+
 import com.judgeapp.ai.GeminiAPI;
 import com.judgeapp.db.*;
 import com.judgeapp.judge.Judge;
 import com.judgeapp.ocr.OCRManager;
 import com.google.gson.*;
 
-import javax.swing.*;
-import javax.swing.border.*;
-import javax.swing.plaf.basic.BasicButtonUI;
-import javax.swing.table.*;
-import java.awt.*;
-import java.awt.event.*;
-import java.io.File;
-import java.nio.file.Files;
-import java.util.ArrayList;
-import java.util.List;
+// PDF support
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
 
 public class MainApp extends JFrame {
 
@@ -504,7 +526,7 @@ public class MainApp extends JFrame {
         lblStatus.setForeground(MUTED);
         List<String[]> pendingTestcases = new ArrayList<>();
 
-        JLabel lblImagePath = new JLabel("Chưa chọn ảnh/file");
+        JLabel lblImagePath = new JLabel("Chưa chọn file");
         lblImagePath.setForeground(MUTED);
         lblImagePath.setFont(BODY_FONT);
         lblImagePath.setBorder(BorderFactory.createCompoundBorder(
@@ -513,8 +535,8 @@ public class MainApp extends JFrame {
         ));
         lblImagePath.setOpaque(true);
         lblImagePath.setBackground(Color.WHITE);
-        JButton btnPickImg = makeBtn("Chọn ảnh/file", new Color(59, 130, 246));
-        JButton btnOCR = makeBtn("AI đọc ảnh/file", new Color(139, 92, 246));
+        JButton btnPickImg = makeBtn("Chọn file", new Color(59, 130, 246));
+        JButton btnOCR = makeBtn("Đọc nội dung file", new Color(139, 92, 246));
         JPanel imgRow = new JPanel(new BorderLayout(6, 0));
         imgRow.setBackground(BG);
         imgRow.add(lblImagePath, BorderLayout.CENTER);
@@ -589,7 +611,7 @@ public class MainApp extends JFrame {
         g.weighty = 0;
         g.fill = GridBagConstraints.HORIZONTAL;
         g.insets = new Insets(0, 0, 8, 0);
-        problemForm.add(makeLabel("Ảnh đề (tùy chọn)"), g);
+        problemForm.add(makeLabel("Nhập từ file (ảnh/text/PDF - tùy chọn)"), g);
         g.gridy = 5;
         problemForm.add(imgRow, g);
 
@@ -655,43 +677,69 @@ public class MainApp extends JFrame {
         btnPickImg.addActionListener(e -> {
             JFileChooser fc = new JFileChooser();
             fc.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
-                "Image & Text files", "jpg", "jpeg", "png", "bmp", "txt", "md"));
+                "Tất cả file hỗ trợ (ảnh, text, PDF)", "jpg", "jpeg", "png", "bmp", "gif", "txt", "md", "pdf"));
+            fc.addChoosableFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
+                "File ảnh (JPG, PNG, BMP, GIF)", "jpg", "jpeg", "png", "bmp", "gif"));
+            fc.addChoosableFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
+                "File text (TXT, MD)", "txt", "md"));
+            fc.addChoosableFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
+                "File PDF", "pdf"));
             if (fc.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
                 imagePath[0] = fc.getSelectedFile().getAbsolutePath();
-                lblImagePath.setText(fc.getSelectedFile().getName());
+                String fileName = fc.getSelectedFile().getName();
+                String ext = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
+                String fileType = switch (ext) {
+                    case "jpg", "jpeg", "png", "bmp", "gif" -> "📷 Ảnh: ";
+                    case "txt", "md" -> "📄 Text: ";
+                    case "pdf" -> "📕 PDF: ";
+                    default -> "📁 File: ";
+                };
+                lblImagePath.setText(fileType + fileName);
                 lblImagePath.setForeground(TEXT);
             }
         });
 
-        // === AI đọc ảnh/file ===
+        // === Đọc nội dung file (OCR cho ảnh, đọc text cho txt/md, extract cho PDF) ===
         btnOCR.addActionListener(e -> {
-            if (imagePath[0] == null) { showError("Chọn ảnh hoặc file trước!"); return; }
+            if (imagePath[0] == null) { showError("Chọn file trước!"); return; }
             
             String filePath = imagePath[0].toLowerCase();
             boolean isImage = filePath.endsWith(".jpg") || filePath.endsWith(".jpeg") 
-                           || filePath.endsWith(".png") || filePath.endsWith(".bmp");
+                           || filePath.endsWith(".png") || filePath.endsWith(".bmp")
+                           || filePath.endsWith(".gif");
             boolean isTextFile = filePath.endsWith(".txt") || filePath.endsWith(".md");
+            boolean isPDF = filePath.endsWith(".pdf");
             
-            if (!isImage && !isTextFile) {
-                showError("Định dạng file không hỗ trợ!");
+            if (!isImage && !isTextFile && !isPDF) {
+                showError("Định dạng file không hỗ trợ! Chỉ hỗ trợ: ảnh (jpg, png, bmp, gif), text (txt, md), PDF");
                 return;
             }
             
-            if (isImage) {
-                lblStatus.setForeground(YELLOW);
-                lblStatus.setText("⏳ Tesseract OCR đang đọc ảnh...");
-            } else {
-                lblStatus.setForeground(YELLOW);
-                lblStatus.setText("⏳ Đang đọc file...");
-            }
+            String statusMsg = isImage ? "⏳ OCR đang đọc ảnh..." 
+                             : isPDF ? "⏳ Đang đọc file PDF..." 
+                             : "⏳ Đang đọc file text...";
+            lblStatus.setForeground(YELLOW);
+            lblStatus.setText(statusMsg);
             
             new Thread(() -> {
                 try {
                     String text;
+                    String fileType;
+                    
                     if (isImage) {
                         text = OCRManager.readImageText(imagePath[0]);
+                        fileType = "OCR";
+                    } else if (isPDF) {
+                        // Đọc PDF bằng PDFBox
+                        File pdfFile = new File(imagePath[0]);
+                        try (PDDocument document = Loader.loadPDF(pdfFile)) {
+                            PDFTextStripper stripper = new PDFTextStripper();
+                            text = stripper.getText(document);
+                        }
+                        fileType = "PDF";
                     } else {
                         text = new String(Files.readAllBytes(new File(imagePath[0]).toPath()), "UTF-8");
+                        fileType = "Text";
                     }
                     
                     SwingUtilities.invokeLater(() -> {
@@ -703,19 +751,27 @@ public class MainApp extends JFrame {
                         String memLimit = info[3];
                         
                         // Tự điền vào form
-                        if (!title.isEmpty()) tfTitle.setText(title);
+                        if (!title.isEmpty()) {
+                            tfTitle.setText(title);
+                            tfTitle.setForeground(TEXT);
+                        }
                         if (!content.isEmpty()) taContent.setText(content);
-                        if (!timeLimit.isEmpty()) tfTime.setText(timeLimit);
-                        if (!memLimit.isEmpty()) tfMem.setText(memLimit);
+                        if (!timeLimit.isEmpty()) {
+                            tfTime.setText(timeLimit);
+                            tfTime.setForeground(TEXT);
+                        }
+                        if (!memLimit.isEmpty()) {
+                            tfMem.setText(memLimit);
+                            tfMem.setForeground(TEXT);
+                        }
                         
                         lblStatus.setForeground(GREEN);
-                        String msgType = isImage ? "OCR" : "File";
-                        lblStatus.setText("✅ " + msgType + " đọc & parse xong! Tên: " + title);
+                        lblStatus.setText("✅ " + fileType + " đọc xong! Tên đề: " + (title.isEmpty() ? "(chưa xác định)" : title));
                     });
                 } catch (Exception ex) {
                     SwingUtilities.invokeLater(() -> {
                         lblStatus.setForeground(RED);
-                        lblStatus.setText("❌ " + ex.getMessage());
+                        lblStatus.setText("❌ Lỗi đọc file: " + ex.getMessage());
                     });
                 }
             }).start();
@@ -828,7 +884,7 @@ public class MainApp extends JFrame {
                 // Reset form
                 tfTitle.setText(""); taContent.setText(""); taTcInput.setText("Nhập input testcase..."); taTcOutput.setText("Nhập expected output...");
                 imagePath[0] = null;
-                lblImagePath.setText("Chưa chọn ảnh");
+                lblImagePath.setText("Chưa chọn file");
                 lblImagePath.setForeground(MUTED);
                 pendingTestcases.clear();
                 tcModel.setRowCount(0);

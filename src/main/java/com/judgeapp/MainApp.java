@@ -16,6 +16,8 @@ import java.awt.Insets;
 import java.awt.LayoutManager;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.File;
@@ -1051,6 +1053,18 @@ public class MainApp extends JFrame {
         // Result
         JTextArea taResult = makeCodeArea();
         taResult.setEditable(false);
+        final int[] resultVersion = {0};
+        codeTabs.addChangeListener(e -> {
+            resultVersion[0]++;
+            taResult.setText("");
+        });
+        panel.addComponentListener(new ComponentAdapter() {
+            @Override
+            public void componentHidden(ComponentEvent e) {
+                resultVersion[0]++;
+                taResult.setText("");
+            }
+        });
 
         JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
             codeTabs, card("Kết quả kiểm tra độ mạnh", darkScroll(taResult)));
@@ -1089,9 +1103,11 @@ public class MainApp extends JFrame {
                     return; 
                 }
                 
-                String codeAC = taAC.getText().trim();
-                if (codeAC.isEmpty() || codeAC.contains("// Paste")) {
-                    taResult.setText("❌ Lỗi: Phải nhập Code AC vào tab 'Code AC'!"); 
+                String codeAC = normalizedSubmittedCode(taAC.getText());
+                String codeWA = normalizedSubmittedCode(taWA.getText());
+                String codeTLE = normalizedSubmittedCode(taTLE.getText());
+                if (codeAC == null && codeWA == null && codeTLE == null) {
+                    taResult.setText("Lỗi: Hãy nhập ít nhất một code mẫu AC, WA hoặc TLE!");
                     return;
                 }
 
@@ -1100,58 +1116,78 @@ public class MainApp extends JFrame {
                 taResult.append("   Time Limit: " + tl + "s\n");
                 taResult.append("   Testcase có: " + tcs.size() + "\n");
                 taResult.append("   Language: " + lang + "\n\n");
+                int runVersion = resultVersion[0];
                 
                 new Thread(() -> {
                     StringBuilder sb = new StringBuilder();
-                    int acPassed = 0, waDetected = 0, tleDetected = 0;
-                    String codeWA = taWA.getText().contains("// Paste") ? null : taWA.getText().trim();
-                    String codeTLE = taTLE.getText().contains("// Paste") ? null : taTLE.getText().trim();
+                    int total = Math.min(runs, tcs.size());
+                    int acPassed = 0;
+                    int waDetected = 0, waPassed = 0, waOther = 0;
+                    int tleDetected = 0, tlePassed = 0, tleOther = 0;
 
-                    for (int i = 0; i < Math.min(runs, tcs.size()); i++) {
+                    for (int i = 0; i < total; i++) {
                         String input = tcs.get(i)[1];
                         String expected = tcs.get(i)[2];
 
-                        // AC code
-                        String[] resAC = Judge.run(codeAC, input, tl, lang);
-                        String acOut = resAC[0];
-                        String acVerdict = Judge.check(expected, acOut);
-                        if (acVerdict.equals("AC")) acPassed++;
+                        sb.append(String.format("Test #%d:", i + 1));
 
-                        sb.append(String.format("Test #%d: AC=%s", i+1, acVerdict));
+                        // AC code
+                        if (codeAC != null) {
+                            String[] resAC = Judge.run(codeAC, input, tl, lang);
+                            String acVerdict = judgeVerdict(expected, resAC[0]);
+                            if (acVerdict.equals("AC")) acPassed++;
+
+                            sb.append(" Code AC=").append(acVerdict);
+                            if (!acVerdict.equals("AC")) {
+                                appendFailureDetails(sb, input, expected, resAC);
+                            }
+                        }
 
                         // WA code
                         if (codeWA != null) {
                             String[] resWA = Judge.run(codeWA, input, tl, lang);
-                            String waVerdict = isSystemVerdict(resWA[0]) ? resWA[0]
-                                : Judge.check(expected, resWA[0]);
-                            if (waVerdict.equals("WA")) waDetected++;
-                            sb.append("  WA_code=").append(waVerdict);
+                            String waVerdict = judgeVerdict(expected, resWA[0]);
+                            if (waVerdict.equals("WA")) {
+                                waDetected++;
+                                sb.append("  Code WA=BAT_DUOC_SAI(WA)");
+                            } else if (waVerdict.equals("AC")) {
+                                waPassed++;
+                                sb.append("  Code WA=SAI_NHUNG_LOT_QUA(AC)");
+                            } else {
+                                waOther++;
+                                sb.append("  Code WA=LOI_MAU(").append(waVerdict).append(")");
+                            }
                         }
 
                         // TLE code
                         if (codeTLE != null) {
                             String[] resTLE = Judge.run(codeTLE, input, tl, lang);
-                            String tleVerdict = isSystemVerdict(resTLE[0]) ? resTLE[0] : Judge.check(expected, resTLE[0]);
-                            if (tleVerdict.equals("TLE")) tleDetected++;
-                            sb.append("  TLE_code=").append(tleVerdict);
+                            String tleVerdict = judgeVerdict(expected, resTLE[0]);
+                            if (tleVerdict.equals("TLE")) {
+                                tleDetected++;
+                                sb.append("  Code TLE=BAT_DUOC_CHAM(TLE)");
+                            } else if (tleVerdict.equals("AC")) {
+                                tlePassed++;
+                                sb.append("  Code TLE=CHUA_BI_CHAM(AC)");
+                            } else {
+                                tleOther++;
+                                sb.append("  Code TLE=LOI_KHAC(").append(tleVerdict).append(")");
+                            }
                         }
 
                         sb.append("\n");
                     }
 
-                    sb.append("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-                    sb.append("✅ Code AC đúng: ").append(acPassed).append("/").append(Math.min(runs, tcs.size())).append("\n");
-                    if (codeWA != null) sb.append("❌ WA bị phát hiện: ").append(waDetected).append(" lần\n");
-                    if (codeTLE != null) sb.append("⏰ TLE bị phát hiện: ").append(tleDetected).append(" lần\n");
+                    appendStressSummary(sb, total,
+                        codeAC != null, acPassed,
+                        codeWA != null, waDetected, waPassed, waOther,
+                        codeTLE != null, tleDetected, tlePassed, tleOther);
 
-                    if (codeWA != null && waDetected == 0)
-                        sb.append("\n⚠️  TESTCASE YẾU! Code WA vẫn pass hết → cần thêm testcase!\n");
-                    if (codeTLE != null && tleDetected == 0)
-                        sb.append("⚠️  TESTCASE YẾU! Code TLE vẫn pass hết → cần testcase lớn hơn!\n");
-                    if ((codeWA == null || waDetected > 0) && (codeTLE == null || tleDetected > 0))
-                        sb.append("\n🏆 TESTCASE TỐT! Đã phát hiện được code sai/chậm!\n");
-
-                    SwingUtilities.invokeLater(() -> taResult.setText(taResult.getText() + sb.toString()));
+                    SwingUtilities.invokeLater(() -> {
+                        if (runVersion == resultVersion[0]) {
+                            taResult.setText(taResult.getText() + sb.toString());
+                        }
+                    });
                 }).start();
             } catch (NumberFormatException ex) { 
                 taResult.setText("❌ Lỗi: Problem ID và Số lần chạy phải là số!\n" + ex.getMessage()); 
@@ -1169,6 +1205,82 @@ public class MainApp extends JFrame {
     // ============================================================
     private boolean isSystemVerdict(String output) {
         return output.equals("CE") || output.equals("TLE") || output.equals("ERR") || output.equals("RE");
+    }
+
+    private String normalizedSubmittedCode(String rawCode) {
+        if (rawCode == null) return null;
+        String code = rawCode.trim();
+        if (code.isEmpty() || code.contains("// Paste")) return null;
+        return code;
+    }
+
+    private String judgeVerdict(String expected, String actual) {
+        return isSystemVerdict(actual) ? actual : Judge.check(expected, actual);
+    }
+
+    private void appendFailureDetails(StringBuilder sb, String input, String expected, String[] result) {
+        sb.append("\n    input=\"").append(escapeVisible(input)).append("\"");
+        sb.append(" expected=\"").append(escapeVisible(expected)).append("\"");
+        sb.append(" actual=\"").append(escapeVisible(result[0])).append("\"");
+        if (result.length > 2 && result[2] != null && !result[2].isBlank()) {
+            sb.append("\n    details=\"").append(escapeVisible(result[2])).append("\"");
+        }
+    }
+
+    private String escapeVisible(String text) {
+        if (text == null) return "";
+        return text
+            .replace("\\", "\\\\")
+            .replace("\r", "\\r")
+            .replace("\n", "\\n")
+            .replace("\t", "\\t");
+    }
+
+    private void appendStressSummary(StringBuilder sb, int total,
+            boolean hasAC, int acPassed,
+            boolean hasWA, int waDetected, int waPassed, int waOther,
+            boolean hasTLE, int tleDetected, int tlePassed, int tleOther) {
+        sb.append("\n---------------------------------\n");
+        if (hasAC) {
+            sb.append("Code AC pass: ").append(acPassed).append("/").append(total).append("\n");
+        }
+        if (hasWA) {
+            sb.append("Code WA sai bi bat: ").append(waDetected).append("/").append(total).append("\n");
+            if (waPassed > 0) sb.append("Code WA sai nhung lot qua: ").append(waPassed).append("/").append(total).append("\n");
+            if (waOther > 0) sb.append("Code WA mau bi loi khac: ").append(waOther).append("/").append(total).append("\n");
+        }
+        if (hasTLE) {
+            sb.append("Code TLE cham bi bat: ").append(tleDetected).append("/").append(total).append("\n");
+            if (tlePassed > 0) sb.append("Code TLE chua bi cham: ").append(tlePassed).append("/").append(total).append("\n");
+            if (tleOther > 0) sb.append("Code TLE mau loi kieu khac: ").append(tleOther).append("/").append(total).append("\n");
+        }
+
+        sb.append("\nDANH GIA DOC LAP:\n");
+        if (hasAC) {
+            if (acPassed == total) {
+                sb.append("- AC: OK, code dung pass het testcase.\n");
+            } else {
+                sb.append("- AC: CHUA ON, code dung khong pass het. Kiem tra expected output, input testcase hoac code AC.\n");
+            }
+        }
+        if (hasWA) {
+            if (waDetected > 0) {
+                sb.append("- WA: OK, da co testcase bat duoc code sai.\n");
+            } else if (waPassed == total) {
+                sb.append("- WA: TESTCASE YEU, code sai van pass het.\n");
+            } else {
+                sb.append("- WA: CHUA DANH GIA DUOC, code WA mau bi CE/RE/TLE hoac loi khac.\n");
+            }
+        }
+        if (hasTLE) {
+            if (tleDetected > 0) {
+                sb.append("- TLE: OK, da co testcase bat duoc code cham.\n");
+            } else if (tlePassed == total) {
+                sb.append("- TLE: TESTCASE CHUA DU LON, code cham van chay AC.\n");
+            } else {
+                sb.append("- TLE: CHUA DANH GIA DUOC, code TLE mau loi kieu khac.\n");
+            }
+        }
     }
 
     private void showTestcaseManagerDialog(int problemId, String problemTitle) {
